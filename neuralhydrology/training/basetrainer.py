@@ -214,6 +214,9 @@ class BaseTrainer(object):
                 mode=self.cfg.early_stopping_mode
             )
             self._best_model_path = None
+            # best value seen so far, tracked separately from early stopping, which only updates its
+            # best value on improvements larger than min_delta
+            self._best_metric_value = float('inf') if self.early_stopping.mode == 'min' else float('-inf')
             LOGGER.info(f"Early stopping enabled: patience={self.cfg.early_stopping_patience}, "
                        f"min_delta={self.cfg.early_stopping_min_delta}, "
                        f"mode={self.cfg.early_stopping_mode}, "
@@ -338,10 +341,10 @@ class BaseTrainer(object):
         if self.early_stopping is None:
             return False
         
-        if self.cfg.early_stopping_mode == 'min':
-            return metric_value < self.early_stopping.best_value
+        if self.early_stopping.mode == 'min':
+            return metric_value < self._best_metric_value
         else:  # mode == 'max'
-            return metric_value > self.early_stopping.best_value
+            return metric_value > self._best_metric_value
 
     def _save_best_model(self, epoch: int, metric_value: float):
         """Save the current model as the best model through wandb logger."""
@@ -353,6 +356,7 @@ class BaseTrainer(object):
             self.experiment_logger.log_best_model(best_model_path, epoch)
 
         self._best_model_path = best_model_path
+        self._best_metric_value = metric_value
         LOGGER.info(f"New best model saved at epoch {epoch} with {self.cfg.early_stopping_metric}: "
                    f"{metric_value:.5f}")
 
