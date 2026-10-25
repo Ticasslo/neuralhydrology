@@ -440,6 +440,15 @@ Training settings
 -  ``num_workers``: Number of (parallel) threads used in the data
    loader.
 
+-  ``data_on_gpu``: True/False. If True, the training, validation and test
+   data are copied to the training device once and every batch is gathered
+   there, instead of building it sample by sample on the CPU. Batches, their
+   order and therefore the results are the same as with the default data
+   loader; ``num_workers`` is ignored. Not supported with multiple
+   frequencies, autoregressive inputs, evolving attributes, mass inputs,
+   basin id encoding or hindcast inputs without ``forecast_seq_length``.
+   Default: False.
+
 -  ``save_weights_every``: Interval, in which the weights of the model
    are stored to disk. ``1`` means to store the weights after each
    epoch, which is the default if not otherwise specified.

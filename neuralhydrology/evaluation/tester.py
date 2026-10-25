@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from neuralhydrology.datasetzoo import get_dataset
 from neuralhydrology.datasetzoo.basedataset import BaseDataset
+from neuralhydrology.datautils.gpu_loader import GpuBatchLoader
 from neuralhydrology.datautils.utils import get_frequency_factor, load_basin_file, load_scaler, sort_frequencies
 from neuralhydrology.evaluation import plots
 from neuralhydrology.evaluation.metrics import calculate_metrics, get_available_metrics
@@ -161,6 +162,16 @@ class BaseTester(object):
                          scaler=self.scaler)
         return ds
 
+    def _get_loader(self, ds: BaseDataset):
+        """Get the batch loader for the dataset of a single basin."""
+        if self.cfg.data_on_gpu:
+            # build the device copy once per dataset, so cached datasets also keep their device copy
+            if getattr(ds, "_gpu_loader", None) is None:
+                ds._gpu_loader = GpuBatchLoader(ds, batch_size=self.cfg.batch_size, device=self.device, shuffle=False,
+                                                with_dates=True)
+            return ds._gpu_loader
+        return DataLoader(ds, batch_size=self.cfg.batch_size, num_workers=0, collate_fn=ds.collate_fn)
+
     def evaluate(self,
                  epoch: int = None,
                  save_results: bool = True,
@@ -229,7 +240,7 @@ class BaseTester(object):
                 if self.cfg.cache_validation_data and self.period == "validation":
                     self.cached_datasets[basin] = ds
 
-            loader = DataLoader(ds, batch_size=self.cfg.batch_size, num_workers=0, collate_fn=ds.collate_fn)
+            loader = self._get_loader(ds)
 
             y_hat, y, dates, all_losses, all_output[basin] = self._evaluate(model, loader, ds.frequencies,
                                                                             save_all_output)

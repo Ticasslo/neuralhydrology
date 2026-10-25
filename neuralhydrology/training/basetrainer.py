@@ -14,6 +14,7 @@ from tqdm import tqdm
 import neuralhydrology.training.loss as loss
 from neuralhydrology.datasetzoo import get_dataset
 from neuralhydrology.datasetzoo.basedataset import BaseDataset
+from neuralhydrology.datautils.gpu_loader import GpuBatchLoader
 from neuralhydrology.datautils.utils import load_basin_file, load_scaler
 from neuralhydrology.evaluation import get_tester
 from neuralhydrology.evaluation.tester import BaseTester
@@ -101,6 +102,9 @@ class BaseTrainer(object):
         return get_tester(cfg=self.cfg, run_dir=self.cfg.run_dir, period="validation", init_model=False)
 
     def _get_data_loader(self, ds: BaseDataset) -> torch.utils.data.DataLoader:
+        if self.cfg.data_on_gpu:
+            # keep the training data on the device and gather each batch there (same batches as the DataLoader)
+            return GpuBatchLoader(ds, batch_size=self.cfg.batch_size, device=self.device, shuffle=True)
         return DataLoader(ds,
                           batch_size=self.cfg.batch_size,
                           shuffle=True,

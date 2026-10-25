@@ -317,6 +317,10 @@ class Config(object):
         return self._get_value_verbose("data_dir")
 
     @property
+    def data_on_gpu(self) -> bool:
+        return self._cfg.get("data_on_gpu", False)
+
+    @property
     def dataset(self) -> str:
         return self._get_value_verbose("dataset")
 
