@@ -26,7 +26,8 @@ def _config(get_config: Callable[[str], Config], tmp_path: Path, forecast: bool,
     update = {'dataset': 'camels_us', 'data_dir': config.data_dir / 'camels_us', 'forcings': 'daymet',
               'dynamic_inputs': FORCINGS, 'log_n_figures': 0, 'log_tensorboard': False}
     if forecast:
-        update.update({'model': 'sequential_forecast_lstm', 'hindcast_inputs': FORCINGS,
+        # update_config checks forecast_seq_length against seq_length of the same dict (config.py line 233)
+        update.update({'model': 'sequential_forecast_lstm', 'seq_length': config.seq_length, 'hindcast_inputs': FORCINGS,
                        'forecast_inputs': FORCINGS, 'forecast_seq_length': 2})
     update.update(extra)
     config.update_config(update)
