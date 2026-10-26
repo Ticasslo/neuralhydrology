@@ -14,7 +14,11 @@ LOGGER = logging.getLogger(__name__)
 def get_optimizer(model: torch.nn.Module, cfg: Config) -> torch.optim.Optimizer:
     """Get specific optimizer object, depending on the run configuration.
     
-    Currently only 'Adam' and 'AdamW' are supported.
+    Currently only 'Adam' and 'AdamW' are supported. Parameters with an ``_optim`` attribute (a dict of optimizer
+    hyperparameters, e.g. the SSM parameters of the S4D core) are put into separate parameter groups with these
+    hyperparameters, one group per distinct setting, following ``setup_optimizer`` in ``example.py`` of
+    https://github.com/state-spaces/s4. All other parameters form the first group with the global learning rate. Without
+    such parameters, the optimizer is created from ``model.parameters()`` as before.
     
     Parameters
     ----------
@@ -28,10 +32,23 @@ def get_optimizer(model: torch.nn.Module, cfg: Config) -> torch.optim.Optimizer:
     torch.optim.Optimizer
         Optimizer object that can be used for model training.
     """
+    params = list(model.parameters())
+    special_params = [p for p in params if hasattr(p, '_optim')]
+    if special_params:
+        param_groups = [{'params': [p for p in params if not hasattr(p, '_optim')]}]
+        hyperparameters = []
+        for p in special_params:
+            if p._optim not in hyperparameters:
+                hyperparameters.append(p._optim)
+        for hp in hyperparameters:
+            param_groups.append({'params': [p for p in special_params if p._optim == hp], **hp})
+    else:
+        param_groups = params
+
     if cfg.optimizer.lower() == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+        optimizer = torch.optim.Adam(param_groups, lr=cfg.learning_rate)
     elif cfg.optimizer.lower() == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+        optimizer = torch.optim.AdamW(param_groups, lr=cfg.learning_rate)
     else:
         raise NotImplementedError(f"{cfg.optimizer} not implemented or not linked in `get_optimizer()`")
 

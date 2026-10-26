@@ -794,6 +794,54 @@ class Config(object):
         return self._cfg.get("shared_mtslstm", False)
 
     @property
+    def sf_core(self) -> str:
+        return self._get_value_verbose("sf_core")
+
+    @property
+    def sf_dropout(self) -> float:
+        return self._cfg.get("sf_dropout", 0.0)
+
+    @property
+    def sf_layers(self) -> int:
+        return self._cfg.get("sf_layers", 1)
+
+    @property
+    def sf_mamba_d_conv(self) -> int:
+        return self._cfg.get("sf_mamba_d_conv", 4)
+
+    @property
+    def sf_mamba_d_state(self) -> int:
+        return self._cfg.get("sf_mamba_d_state", 16)
+
+    @property
+    def sf_mamba_expand(self) -> int:
+        return self._cfg.get("sf_mamba_expand", 2)
+
+    @property
+    def sf_s4d_d_state(self) -> int:
+        return self._cfg.get("sf_s4d_d_state", 64)
+
+    @property
+    def sf_s4d_dt_max(self) -> float:
+        return self._cfg.get("sf_s4d_dt_max", 0.1)
+
+    @property
+    def sf_s4d_dt_min(self) -> float:
+        return self._cfg.get("sf_s4d_dt_min", 0.01)
+
+    @property
+    def sf_s4d_lr(self) -> Optional[float]:
+        return self._cfg.get("sf_s4d_lr", None)
+
+    @property
+    def sf_transformer_dim_feedforward(self) -> Optional[int]:
+        return self._cfg.get("sf_transformer_dim_feedforward", None)
+
+    @property
+    def sf_transformer_nheads(self) -> int:
+        return self._cfg.get("sf_transformer_nheads", 4)
+
+    @property
     def static_attributes(self) -> List[str]:
         if "static_attributes" in self._cfg.keys():
             return self._as_default_list(self._cfg["static_attributes"])

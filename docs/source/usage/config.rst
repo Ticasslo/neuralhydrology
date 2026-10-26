@@ -236,6 +236,25 @@ These are used if ``model == mamba``.
 -  ``mamba_d_state``: State Space Model state expansion factor
 -  ``mamba_expand``: Block expansion factor
 
+Sequential forecast settings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+These are used if ``model == sequential_forecast``. ``hidden_size`` is the output size of the core (the model
+dimension for the Transformer, S4D and Mamba cores).
+
+-  ``sf_core``: Temporal core, one of ``[lstm, gru, transformer, s4d, mamba]`` (mandatory).
+-  ``sf_layers``: Number of stacked layers (blocks) of the core. Defaults to 1.
+-  ``sf_dropout``: Dropout inside the Transformer, S4D and Mamba cores (between residual blocks and, for the
+   Transformer, in the encoder layers and the positional encoding). Defaults to 0.
+-  ``sf_transformer_nheads``: Number of attention heads. ``hidden_size`` must be divisible by it. Defaults to 4.
+-  ``sf_transformer_dim_feedforward``: Size of the feed-forward layers of the Transformer core. Defaults to
+   ``4 * hidden_size``.
+-  ``sf_s4d_d_state``: State size of the S4D layers. Defaults to 64.
+-  ``sf_s4d_dt_min``, ``sf_s4d_dt_max``: Range of the initial S4D step sizes. Default to 0.01 and 0.1.
+-  ``sf_s4d_lr``: Learning rate of the S4D state space parameters (``log_dt``, ``log_A_real``, ``A_imag``), which get
+   their own parameter group without weight decay. ``0`` keeps them fixed. Defaults to None (``learning_rate``).
+-  ``sf_mamba_d_state``, ``sf_mamba_d_conv``, ``sf_mamba_expand``: State size, local convolution width and expansion
+   factor of the ``mamba_ssm.Mamba`` blocks. Default to 16, 4 and 2.
+
 Transformer settings
 ~~~~~~~~~~~~~~~~~~~~
 

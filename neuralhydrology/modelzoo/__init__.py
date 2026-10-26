@@ -15,6 +15,7 @@ from neuralhydrology.modelzoo.mclstm import MCLSTM
 from neuralhydrology.modelzoo.mtslstm import MTSLSTM
 from neuralhydrology.modelzoo.multihead_forecast_lstm import MultiHeadForecastLSTM
 from neuralhydrology.modelzoo.odelstm import ODELSTM
+from neuralhydrology.modelzoo.sequential_forecast import SequentialForecast
 from neuralhydrology.modelzoo.sequential_forecast_lstm import SequentialForecastLSTM
 from neuralhydrology.modelzoo.stacked_forecast_lstm import StackedForecastLSTM
 from neuralhydrology.modelzoo.transformer import Transformer
@@ -31,6 +32,7 @@ SINGLE_FREQ_MODELS = [
     "mclstm", 
     "arlstm",
     "handoff_forecast_lstm",
+    "sequential_forecast",
     "sequential_forecast_lstm",
     "multihead_forecast_lstm",
     "stacked_forecast_lstm"
@@ -91,6 +93,8 @@ def get_model(cfg: Config) -> nn.Module:
         model = HandoffForecastLSTM(cfg=cfg)
     elif cfg.model.lower() == "multihead_forecast_lstm":
         model = MultiHeadForecastLSTM(cfg=cfg)
+    elif cfg.model.lower() == "sequential_forecast":
+        model = SequentialForecast(cfg=cfg)
     elif cfg.model.lower() == "sequential_forecast_lstm":
         model = SequentialForecastLSTM(cfg=cfg)
     elif cfg.model.lower() == "stacked_forecast_lstm":
