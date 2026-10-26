@@ -810,6 +810,10 @@ class Config(object):
         return self._cfg.get("sf_mamba_d_conv", 4)
 
     @property
+    def sf_mamba_d_inner(self) -> Optional[int]:
+        return self._cfg.get("sf_mamba_d_inner", None)
+
+    @property
     def sf_mamba_d_state(self) -> int:
         return self._cfg.get("sf_mamba_d_state", 16)
 

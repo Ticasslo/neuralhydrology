@@ -56,7 +56,7 @@ def get_core(cfg: Config, input_size: int) -> nn.Module:
         return ResidualCore(cfg, input_size, lambda d: MambaSSM(d_model=d,
                                                                  d_state=cfg.sf_mamba_d_state,
                                                                  d_conv=cfg.sf_mamba_d_conv,
-                                                                 expand=cfg.sf_mamba_expand))
+                                                                 expand=mamba_expand(cfg, d)))
     raise ValueError(f'Unknown sf_core {cfg.sf_core}. Choose one of {SF_CORES}.')
 
 
@@ -261,13 +261,28 @@ def count_parameters(module: nn.Module) -> int:
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
-def mamba_block_parameters(d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2) -> int:
+def mamba_expand(cfg: Config, d_model: int) -> float:
+    """Expansion factor passed to ``mamba_ssm.Mamba`` for a block of size ``d_model``.
+
+    ``mamba_ssm.Mamba`` sets ``d_inner = int(expand * d_model)`` (``mamba_ssm/modules/mamba_simple.py``, v2.3.2).
+    Without ``sf_mamba_d_inner`` this is ``sf_mamba_expand`` (default 2). With ``sf_mamba_d_inner``, the returned factor
+    gives exactly this inner size; it is used to match the number of parameters finely, like the feed-forward size of
+    the Transformer core. To load such a block into ``mambapy`` (CPU), set ``MambaConfig.d_inner`` to the block's
+    ``d_inner`` after creating the config.
+    """
+    if cfg.sf_mamba_d_inner is None:
+        return cfg.sf_mamba_expand
+    # +0.5 so that int(expand * d_model) is d_inner despite rounding of the floating point product
+    return (cfg.sf_mamba_d_inner + 0.5) / d_model
+
+
+def mamba_block_parameters(d_model: int, d_state: int = 16, d_conv: int = 4, expand: float = 2) -> int:
     """Number of parameters of one ``mamba_ssm.Mamba`` block (default ``dt_rank``, ``bias=False``, ``conv_bias=True``).
 
     Follows the layer definitions in ``mamba_ssm/modules/mamba_simple.py`` (in_proj, conv1d, x_proj, dt_proj, A_log, D,
     out_proj), so the size can be computed on machines without the CUDA package; check against the real module on GPU.
     """
-    d_inner = expand * d_model
+    d_inner = int(expand * d_model)
     dt_rank = math.ceil(d_model / 16)
     return (d_model * 2 * d_inner  # in_proj
             + d_inner * d_conv + d_inner  # conv1d (depthwise, with bias)
@@ -303,7 +318,7 @@ def count_model_parameters(cfg: Config, update: dict = None) -> int:
     n_params = count_parameters(SequentialForecast(cfg))
     if n_mamba_layers:
         d = cfg.hidden_size
-        block = mamba_block_parameters(d, cfg.sf_mamba_d_state, cfg.sf_mamba_d_conv, cfg.sf_mamba_expand)
+        block = mamba_block_parameters(d, cfg.sf_mamba_d_state, cfg.sf_mamba_d_conv, mamba_expand(cfg, d))
         n_params += n_mamba_layers * (block + 2 * d)
     return n_params
 
@@ -323,10 +338,11 @@ def _closest(values: list, key: Callable[[int], dict], cfg: Config, target: int)
 def match_parameters(cfg: Config, target: int, max_hidden_size: int = 1024, tolerance: float = 0.01) -> dict:
     """Find the config arguments that give ``SequentialForecast`` the number of parameters closest to ``target``.
 
-    Searches ``hidden_size`` (for the Transformer core only multiples of ``sf_transformer_nheads``, with the default
-    feed-forward size). For the Transformer core, ``sf_transformer_dim_feedforward`` is then searched for the chosen
-    ``hidden_size``, because steps of ``sf_transformer_nheads`` in ``hidden_size`` change the size by several percent.
-    All other ``sf_*`` arguments are kept.
+    Searches ``hidden_size`` (for the Transformer core only multiples of ``sf_transformer_nheads``) with the default
+    inner sizes. Then ``sf_transformer_dim_feedforward`` (Transformer core) or ``sf_mamba_d_inner`` (Mamba core) is
+    searched for the chosen ``hidden_size``, because one step of ``hidden_size`` can change these models by more than
+    1 % (Transformer: steps of ``sf_transformer_nheads``; Mamba: matrices of size ``hidden_size x d_inner`` in every
+    layer). All other ``sf_*`` arguments are kept.
 
     Parameters
     ----------
@@ -342,22 +358,26 @@ def match_parameters(cfg: Config, target: int, max_hidden_size: int = 1024, tole
     Returns
     -------
     dict
-        Config arguments to update, ``hidden_size`` and for the Transformer core ``sf_transformer_dim_feedforward``.
+        Config arguments to update: ``hidden_size``, for the Transformer core also ``sf_transformer_dim_feedforward``,
+        for the Mamba core also ``sf_mamba_d_inner``.
 
     Raises
     ------
     ValueError
         If the closest model differs from ``target`` by more than ``tolerance``.
     """
-    transformer = cfg.sf_core.lower() == 'transformer'
-    step = cfg.sf_transformer_nheads if transformer else 1
+    core = cfg.sf_core.lower()
+    # inner size searched after hidden_size, and the largest candidate as a multiple of hidden_size
+    fine = {'transformer': ('sf_transformer_dim_feedforward', 16), 'mamba': ('sf_mamba_d_inner', 8)}.get(core)
+    defaults = {'sf_transformer_dim_feedforward': None, 'sf_mamba_d_inner': None}
+    step = cfg.sf_transformer_nheads if core == 'transformer' else 1
     sizes = list(range(step, max_hidden_size + 1, step))
-    hidden_size = _closest(sizes, lambda h: {'hidden_size': h, 'sf_transformer_dim_feedforward': None}, cfg, target)
+    hidden_size = _closest(sizes, lambda h: {**defaults, 'hidden_size': h}, cfg, target)
     update = {'hidden_size': hidden_size}
-    if transformer:
-        update['sf_transformer_dim_feedforward'] = _closest(
-            list(range(1, 16 * hidden_size + 1)),
-            lambda f: {'hidden_size': hidden_size, 'sf_transformer_dim_feedforward': f}, cfg, target)
+    if fine:
+        key, max_mult = fine
+        update[key] = _closest(list(range(1, max_mult * hidden_size + 1)),
+                               lambda f: {**defaults, 'hidden_size': hidden_size, key: f}, cfg, target)
     difference = abs(count_model_parameters(cfg, update) - target) / target
     if difference > tolerance:
         raise ValueError(f'No hidden_size of sf_core {cfg.sf_core} matches {target} parameters within {tolerance:.1%} '

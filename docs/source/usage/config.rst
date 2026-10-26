@@ -254,6 +254,9 @@ dimension for the Transformer, S4D and Mamba cores).
    their own parameter group without weight decay. ``0`` keeps them fixed. Defaults to None (``learning_rate``).
 -  ``sf_mamba_d_state``, ``sf_mamba_d_conv``, ``sf_mamba_expand``: State size, local convolution width and expansion
    factor of the ``mamba_ssm.Mamba`` blocks. Default to 16, 4 and 2.
+-  ``sf_mamba_d_inner``: Inner size of the Mamba blocks; overrides ``sf_mamba_expand`` (the block gets
+   ``expand = d_inner / hidden_size``). Used to match the number of parameters finely. Defaults to None
+   (``sf_mamba_expand * hidden_size``).
 
 Transformer settings
 ~~~~~~~~~~~~~~~~~~~~

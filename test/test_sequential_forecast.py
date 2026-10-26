@@ -12,7 +12,8 @@ from neuralhydrology.evaluation.evaluate import start_evaluation
 from neuralhydrology.modelzoo import get_model
 from neuralhydrology.modelzoo.sequential_forecast import SequentialForecast
 from neuralhydrology.modelzoo.sequential_forecast_lstm import SequentialForecastLSTM
-from neuralhydrology.modelzoo.sf_cores import count_model_parameters, count_parameters, get_core, match_parameters
+from neuralhydrology.modelzoo.sf_cores import (count_model_parameters, count_parameters, get_core,
+                                               mamba_block_parameters, mamba_expand, match_parameters)
 from neuralhydrology.training import get_lr_scheduler, get_optimizer
 from neuralhydrology.training.train import start_training
 from neuralhydrology.utils.config import Config
@@ -147,7 +148,8 @@ def test_b1b_lstm_parameters(get_config: Fixture[Callable[[str], Config]], tmp_p
 
 @pytest.mark.parametrize('core, extra', [('lstm', {}), ('gru', {}), ('transformer', {'sf_layers': 2}),
                                          ('transformer', {'sf_layers': 4}), ('s4d', {'sf_layers': 2}),
-                                         ('mamba', {'sf_layers': 2})])
+                                         ('mamba', {'sf_layers': 2}), ('mamba', {'sf_layers': 4}),
+                                         ('mamba', {'sf_layers': 6})])
 def test_match_parameters(get_config: Fixture[Callable[[str], Config]], tmp_path: Path, core: str, extra: dict):
     config = _b1b_config(get_config, tmp_path, sf_core=core, **extra)
     update = match_parameters(config, B1B_PARAMETERS)
@@ -156,8 +158,24 @@ def test_match_parameters(get_config: Fixture[Callable[[str], Config]], tmp_path
         assert update == {'hidden_size': 128}
     if core == 'transformer':
         assert update['hidden_size'] % config.sf_transformer_nheads == 0
-        # the feed-forward size gives a much finer match than hidden_size alone
+    # the inner size gives a finer match than hidden_size alone (Mamba 4 and 6 layers: > 1 % without it)
+    if core == 'transformer':
         assert abs(count_model_parameters(config, update) - B1B_PARAMETERS) <= 0.002 * B1B_PARAMETERS
+    if core == 'mamba':
+        assert abs(count_model_parameters(config, update) - B1B_PARAMETERS) <= 0.006 * B1B_PARAMETERS
+
+
+def test_mamba_expand(get_config: Fixture[Callable[[str], Config]], tmp_path: Path):
+    # mamba_ssm.Mamba uses d_inner = int(expand * d_model): the factor must give exactly sf_mamba_d_inner
+    config = _config(get_config, tmp_path, sf_core='mamba')
+    assert mamba_expand(config, 64) == 2
+    for d_model in range(1, 200):
+        for d_inner in range(1, 8 * d_model + 1, 7):
+            config.update_config({'sf_mamba_d_inner': d_inner})
+            assert int(mamba_expand(config, d_model) * d_model) == d_inner
+    # the formula counts the same block for the integer and the fractional factor of the same inner size
+    config.update_config({'sf_mamba_d_inner': 128})
+    assert mamba_block_parameters(64, expand=mamba_expand(config, 64)) == mamba_block_parameters(64, expand=2)
 
 
 def test_match_parameters_tolerance(get_config: Fixture[Callable[[str], Config]], tmp_path: Path):
@@ -213,6 +231,7 @@ def test_config_keys(get_config: Fixture[Callable[[str], Config]], tmp_path: Pat
                      sf_mamba_expand=1)
     assert (config.sf_mamba_d_state, config.sf_mamba_d_conv, config.sf_mamba_expand) == (32, 3, 1)
     assert config.sf_layers == 1 and config.sf_dropout == 0.0 and config.sf_s4d_lr is None
+    assert config.sf_mamba_d_inner is None and config.sf_transformer_dim_feedforward is None
 
     config = _config(get_config, tmp_path)
     del config.as_dict()['sf_core']
