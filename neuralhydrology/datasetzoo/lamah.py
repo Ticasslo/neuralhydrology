@@ -91,18 +91,10 @@ class LamaH(BaseDataset):
 
     @staticmethod
     def _get_list_of_all_variables(cfg: Config) -> List[str]:
-        all_variables = []
-        if isinstance(cfg.target_variables, dict):
-            for val in cfg.target_variables.values():
-                all_variables = all_variables + val
-        else:
-            all_variables = all_variables + cfg.target_variables
-        if isinstance(cfg.dynamic_inputs, dict):
-            for val in cfg.dynamic_inputs.values():
-                all_variables = all_variables + val
-        else:
-            all_variables = all_variables + cfg.dynamic_inputs
-        return all_variables
+        targets = cfg.target_variables
+        if isinstance(targets, dict):
+            targets = [variable for group in targets.values() for variable in group]
+        return list(dict.fromkeys(targets + cfg.dynamic_inputs_flattened))
 
     def _load_basin_data(self, basin: str) -> pd.DataFrame:
         """Load input and output data from text files."""

@@ -68,7 +68,7 @@ class InputLayer(nn.Module):
                 self._dynamic_inputs = [dynamic_inputs]
             else:
                 self._dynamic_inputs = dynamic_inputs
-            if cfg.timestep_counter:
+            if cfg.timestep_counter and cfg.nan_handling_method != "masked_mean":
                 # Add timestep counter to each feature group.
                 if self.embedding_type == 'hindcast':
                     self._dynamic_inputs = [group + ['hindcast_counter'] for group in self._dynamic_inputs]
@@ -145,6 +145,12 @@ class InputLayer(nn.Module):
         else:
             self.dynamics_embedding_p_dropout = cfg.dynamics_embedding['dropout']
 
+        # Append time independently of source availability, including the all-missing case.
+        self._separate_counter = cfg.timestep_counter and cfg.nan_handling_method == 'masked_mean'
+        if self._separate_counter:
+            if embedding_type not in ('hindcast', 'forecast'):
+                raise ValueError('Masked-mean timestep counters require a forecast model.')
+            self.dynamics_output_size += 1
         self.output_size = self.dynamics_output_size + self.statics_output_size + self._num_autoregression_inputs
         self.cfg = cfg
 
@@ -233,6 +239,10 @@ class InputLayer(nn.Module):
             # transpose to [seq_length, batch_size, n_features]
             x_d = torch.cat([data[self._x_d_key][k] for k in itertools.chain(*features)], dim=-1).transpose(0, 1)
             dynamics_out = self.dynamics_embeddings[0](x_d)
+
+        if self._separate_counter:
+            counter = data[self._x_d_key][f'{self.embedding_type}_counter'].transpose(0, 1)
+            dynamics_out = torch.cat([dynamics_out, counter], dim=-1)
 
         if not concatenate_output:
             ret_val = dynamics_out, statics_out

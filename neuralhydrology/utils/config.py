@@ -441,6 +441,14 @@ class Config(object):
         return self._cfg.get("forecast_overlap", None)
 
     @property
+    def forecast_input_mode(self) -> str:
+        # all: existing one-day inputs; first_day: only HRES from the first forecast day.
+        mode = self._cfg.get('forecast_input_mode', 'all')
+        if mode not in ('all', 'first_day'):
+            raise ValueError('forecast_input_mode must be all or first_day.')
+        return mode
+
+    @property
     def forecast_seq_length(self) -> int:
         return self._cfg.get("forecast_seq_length", None)
 

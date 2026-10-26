@@ -208,7 +208,8 @@ class BaseDataset(Dataset):
             sample['x_one_hot'] = torch.nn.functional.one_hot(torch.tensor(self.id_to_int[basin]),
                                                               num_classes=len(self.id_to_int)).to(torch.float32)
 
-        return sample
+        from neuralhydrology.datautils.forecast_inputs import prepare_forecast_inputs
+        return prepare_forecast_inputs(sample, self.cfg)
 
     def _add_nan_streaks(self, x_d: dict[str, torch.Tensor], groups: list[list[str]]) -> dict[str, torch.Tensor]:
         """Samples NaN streaks for each feature group."""
@@ -618,7 +619,7 @@ class BaseDataset(Dataset):
                 # manually unroll the dicts into lists to make sure the order of frequencies is consistent.
                 # during inference, we want all samples with sufficient history (even if input is NaN), so
                 # we pass x_d, x_s, y as None.
-                if self.is_train:
+                if self.is_train and self.cfg.nan_handling_method != "masked_mean":
                     x_d_validate = [np.concatenate([v for v in x_d[freq].values()], axis=-1)
                                     for freq in self.frequencies]
                 else:
@@ -639,6 +640,11 @@ class BaseDataset(Dataset):
                     raise ValueError('Autoregressive inputs are not supported for datasets with multiple frequencies.')
                 x_d[self.frequencies[0]].update({col: df_resampled[[col]].values
                                                  for col in self.cfg.autoregressive_inputs})
+
+            # Static attributes are never repaired by dynamic masked-mean embeddings.
+            if self.is_train and self.cfg.nan_handling_method == "masked_mean":
+                if basin in self._attributes and not torch.isfinite(self._attributes[basin]).all():
+                    flag[:] = 0
 
             valid_samples = np.argwhere(flag == 1)
             for f in valid_samples:

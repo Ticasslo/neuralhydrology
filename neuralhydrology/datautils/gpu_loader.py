@@ -136,7 +136,8 @@ class GpuBatchLoader:
             batch["x_s"] = self._attributes[basin]
         if self._stds is not None:
             batch["per_basin_target_stds"] = self._stds[basin]
-        return batch
+        from neuralhydrology.datautils.forecast_inputs import prepare_forecast_inputs
+        return prepare_forecast_inputs(batch, self.cfg)
 
     def _add_nan_streaks(self, block: torch.Tensor, keys: List[str], name: str) -> torch.Tensor:
         # same distribution as BaseDataset._add_nan_streaks (per sample and feature group), drawn on the device
