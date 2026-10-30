@@ -229,6 +229,17 @@ Sequential-Forecast-LSTM
 out through both the hindcast and forecast sequences. The difference between this and a standard `CudaLSTM`_ is (1) this model uses both hindcast and forecast 
 input features, and (2) it uses a separate embedding network for the hindcast period and the forecast period. Do not use this model with ``forecast_overlap`` > 0.
 
+Sequential-Forecast
+^^^^^^^^^^^^^^^^^^^
+:py:class:`neuralhydrology.modelzoo.sequential_forecast.SequentialForecast` has the embedding networks and head of the
+`Sequential-Forecast-LSTM`_, but an exchangeable temporal core that runs once over the concatenated hindcast and forecast
+sequences: ``lstm``, ``gru``, ``transformer`` (causal pre-LayerNorm encoder), ``s4d`` (diagonal state space model of
+Gu et al. 2022) or ``mamba`` (``mamba_ssm.Mamba`` applied along the time axis), selected with ``sf_core``. Every core is
+causal, so the output at a time step only depends on inputs up to this step. With ``sf_core: lstm`` the model equals
+the Sequential-Forecast-LSTM. The core settings are listed in the config documentation; ``sf_cores.match_parameters``
+finds the ``hidden_size`` that gives a core the same number of parameters as a reference model.
+Do not use this model with ``forecast_overlap`` > 0.
+
 Stacked-Forecast-LSTM
 ^^^^^^^^^^^^^^^^^^^^^
 :py:class:`neuralhydrology.modelzoo.stacked_forecast_lstm.StackedForecastLSTM` is a forecasting model that uses two stacked sequential (LSTM) models to handle hindcast vs. forecast. 
