@@ -414,6 +414,13 @@ Training settings
 -  ``max_updates_per_epoch``: Maximum number of weight updates per training epoch.
    Leave unspecified to go through all data in every epoch.
 
+-  ``max_training_hours``: If specified, training pauses after the first
+   epoch at which the time since the start of the run plus the longest
+   epoch so far exceeds this number of hours. All files of that epoch,
+   including the training state, are written before pausing, so the run
+   can be continued with ``resume_training_state``. Leave unspecified to
+   train for all epochs.
+
 -  ``use_frequencies``: Defines the time step frequencies to use (daily,
    hourly, ...). Use `pandas frequency
    strings <https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases>`__
@@ -474,6 +481,17 @@ Training settings
 -  ``save_weights_every``: Interval, in which the weights of the model
    are stored to disk. ``1`` means to store the weights after each
    epoch, which is the default if not otherwise specified.
+
+-  ``resume_training_state``: Only used when continuing training
+   (``nh-run continue_training``). If True, training continues inside the
+   run directory from the last epoch with model weights, optimizer state
+   and training state (``training_state_epochNNN.pt``, written after every
+   epoch: learning rate scheduler, early stopping, best validation metric,
+   logger counters and random number generator states) and stops at
+   ``epochs``, so that the continued run matches an uninterrupted run. The
+   configuration of the continued run is stored as
+   ``config_continue_from_epochNNN.yml``. Default: False (continue in a new
+   subdirectory and train ``epochs`` more epochs).
    
 Finetune settings
 -----------------

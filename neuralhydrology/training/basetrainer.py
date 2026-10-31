@@ -1,7 +1,9 @@
 import logging
 import pickle
 import random
+import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -55,6 +57,8 @@ class BaseTrainer(object):
         self._allow_subsequent_nan_losses = cfg.allow_subsequent_nan_losses
         self._disable_pbar = cfg.verbose == 0
         self._max_updates_per_epoch = cfg.max_updates_per_epoch
+        self._start_time = time.time()
+        self._best_epoch = None
 
         # load train basin list and add number of basins to the config
         self.basins = load_basin_file(cfg.train_basin_file)
@@ -184,7 +188,11 @@ class BaseTrainer(object):
         if self.cfg.is_continue_training:
             self._restore_training_state()
 
-        self.experiment_logger = Logger(cfg=self.cfg)
+        config_file_name = 'config.yml'
+        if self._resumes_training_state():
+            # keep the configuration of the interrupted run
+            config_file_name = f'config_continue_from_epoch{self._epoch:03d}.yml'
+        self.experiment_logger = Logger(cfg=self.cfg, config_file_name=config_file_name)
         if self.cfg.log_tensorboard:
             self.experiment_logger.start_tb()
 
@@ -226,13 +234,23 @@ class BaseTrainer(object):
                        f"mode={self.cfg.early_stopping_mode}, "
                        f"monitoring={self.cfg.early_stopping_metric}")
 
+        # restore the rest of the training state last, right before the next training step, so that building the
+        # model and the data does not advance the restored random number generators
+        if self._resumes_training_state():
+            self._restore_resume_state()
+
     def train_and_validate(self):
         """Train and validate the model.
 
         Train the model for the number of epochs specified in the run configuration, and perform validation after every
         ``validate_every`` epochs. Model and optimizer state are saved after every ``save_weights_every`` epochs.
         """
-        for epoch in range(self._epoch + 1, self._epoch + self.cfg.epochs + 1):
+        # a resumed run stops at 'epochs', a plain continued run trains 'epochs' more epochs
+        last_epoch = self.cfg.epochs if self._resumes_training_state() else self._epoch + self.cfg.epochs
+        longest_epoch = 0.0
+        for epoch in range(self._epoch + 1, last_epoch + 1):
+            epoch_start = time.time()
+            stop_early = False
             self._train_epoch(epoch=epoch)
             
             # Step the learning rate scheduler if one is configured
@@ -296,18 +314,37 @@ class BaseTrainer(object):
                         self._save_best_model(epoch, metric_value)
                     
                     # Check if we should stop training
-                    if self.early_stopping(metric_value, epoch):
-                        LOGGER.info(f"Training stopped early at epoch {epoch}")
-                        if self._best_model_path:
-                            LOGGER.info(f"Best model saved at: {self._best_model_path}")
-                        break
+                    stop_early = self.early_stopping(metric_value, epoch)
+
+            # stored after validation and early stopping, i.e. the state right before the next epoch
+            self._save_training_state(epoch)
+
+            if stop_early:
+                LOGGER.info(f"Training stopped early at epoch {epoch}")
+                if self._best_model_path:
+                    LOGGER.info(f"Best model saved at: {self._best_model_path}")
+                break
+
+            longest_epoch = max(longest_epoch, time.time() - epoch_start)
+            if self.cfg.max_training_hours is not None and epoch < last_epoch:
+                elapsed = time.time() - self._start_time
+                if (elapsed + longest_epoch) / 3600 > self.cfg.max_training_hours:
+                    LOGGER.info(f"Training paused at epoch {epoch} (max_training_hours: {self.cfg.max_training_hours}, "
+                                f"elapsed {elapsed / 3600:.2f} h, longest epoch {longest_epoch / 3600:.2f} h). "
+                                f"Continue with resume_training_state.")
+                    break
 
         # make sure to close tensorboard to avoid losing the last epoch
         if self.cfg.log_tensorboard:
             self.experiment_logger.stop_tb()
 
+    def _resumes_training_state(self) -> bool:
+        return bool(self.cfg.is_continue_training and self.cfg.resume_training_state)
+
     def _get_start_epoch_number(self):
-        if self.cfg.is_continue_training:
+        if self._resumes_training_state():
+            epoch = self._last_resumable_epoch(self.cfg.run_dir)
+        elif self.cfg.is_continue_training:
             if self.cfg.continue_from_epoch is not None:
                 epoch = self.cfg.continue_from_epoch
             else:
@@ -318,7 +355,10 @@ class BaseTrainer(object):
         return int(epoch)
 
     def _restore_training_state(self):
-        if self.cfg.continue_from_epoch is not None:
+        if self._resumes_training_state():
+            epoch = f"{self._epoch:03d}"
+            weight_path = self.cfg.base_run_dir / f"model_epoch{epoch}.pt"
+        elif self.cfg.continue_from_epoch is not None:
             epoch = f"{self.cfg.continue_from_epoch:03d}"
             weight_path = self.cfg.base_run_dir / f"model_epoch{epoch}.pt"
         else:
@@ -330,6 +370,73 @@ class BaseTrainer(object):
         LOGGER.info(f"Continue training from epoch {int(epoch)}")
         self.model.load_state_dict(torch.load(weight_path, map_location=self.device))
         self.optimizer.load_state_dict(torch.load(str(optimizer_path), map_location=self.device))
+
+    @staticmethod
+    def _last_resumable_epoch(run_dir: Path) -> int:
+        """Last epoch of a run with model weights, optimizer state and training state on disk."""
+        epochs = sorted(int(p.stem[-3:]) for p in run_dir.glob('training_state_epoch*.pt'))
+        epochs = [
+            e for e in epochs if (run_dir / f"model_epoch{e:03d}.pt").is_file() and
+            (run_dir / f"optimizer_state_epoch{e:03d}.pt").is_file()
+        ]
+        if not epochs:
+            raise FileNotFoundError(f"No epoch in {run_dir} has model weights, optimizer state and training state "
+                                    "(training_state_epochNNN.pt), which resume_training_state needs.")
+        return epochs[-1]
+
+    def _save_training_state(self, epoch: int):
+        """Store everything besides weights and optimizer that the next epoch depends on."""
+        np_state = np.random.get_state()
+        state = {
+            'epoch': epoch,
+            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None,
+            'early_stopping': self.early_stopping.state_dict() if self.early_stopping is not None else None,
+            'best_metric_value': getattr(self, '_best_metric_value', None),
+            'best_epoch': self._best_epoch,
+            'logger_epoch': self.experiment_logger.epoch,
+            'logger_update': self.experiment_logger.update,
+            'rng_python': random.getstate(),
+            # plain Python types, so that the file loads with torch.load(weights_only=True)
+            'rng_numpy': (np_state[0], np_state[1].tolist(), int(np_state[2]), int(np_state[3]), float(np_state[4])),
+            'rng_torch': torch.get_rng_state(),
+            'rng_cuda': torch.cuda.get_rng_state(self.device) if self.device.type == 'cuda' else None,
+        }
+        # write to a temporary file first, so that an interrupted write never leaves a broken state file
+        path = self.cfg.run_dir / f"training_state_epoch{epoch:03d}.pt"
+        tmp_path = path.with_suffix('.tmp')
+        torch.save(state, str(tmp_path))
+        tmp_path.replace(path)
+
+    def _restore_resume_state(self):
+        path = self.cfg.base_run_dir / f"training_state_epoch{self._epoch:03d}.pt"
+        # weights_only: the file holds tensors and plain Python types only
+        state = torch.load(str(path), map_location='cpu', weights_only=True)
+        if state['epoch'] != self._epoch:
+            raise RuntimeError(f"{path} holds epoch {state['epoch']}, expected {self._epoch}.")
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.load_state_dict(state['lr_scheduler'])
+        if self.early_stopping is not None:
+            self.early_stopping.load_state_dict(state['early_stopping'])
+            self._best_metric_value = state['best_metric_value']
+            self._best_epoch = state['best_epoch']
+            if self._best_epoch is not None:
+                # the interrupted run may have written best_model.pt in an epoch after the resumed one; the weights of
+                # the best epoch are only on disk if that epoch was saved (save_weights_every)
+                best_model_path = self.cfg.run_dir / "best_model.pt"
+                best_epoch_weights = self.cfg.run_dir / f"model_epoch{self._best_epoch:03d}.pt"
+                if best_epoch_weights.is_file():
+                    shutil.copyfile(best_epoch_weights, best_model_path)
+                self._best_model_path = best_model_path
+        self.experiment_logger.epoch = state['logger_epoch']
+        self.experiment_logger.update = state['logger_update']
+
+        random.setstate(state['rng_python'])
+        name, keys, pos, has_gauss, cached_gaussian = state['rng_numpy']
+        np.random.set_state((name, np.array(keys, dtype=np.uint32), pos, has_gauss, cached_gaussian))
+        torch.set_rng_state(state['rng_torch'])
+        if state['rng_cuda'] is not None and self.device.type == 'cuda':
+            torch.cuda.set_rng_state(state['rng_cuda'], self.device)
+        LOGGER.info(f"Training state of epoch {self._epoch} restored from {path}")
 
     def _save_weights_and_optimizer(self, epoch: int):
         weight_path = self.cfg.run_dir / f"model_epoch{epoch:03d}.pt"
@@ -361,6 +468,7 @@ class BaseTrainer(object):
 
         self._best_model_path = best_model_path
         self._best_metric_value = metric_value
+        self._best_epoch = epoch
         LOGGER.info(f"New best model saved at epoch {epoch} with {self.cfg.early_stopping_metric}: "
                    f"{metric_value:.5f}")
 
@@ -459,6 +567,16 @@ class BaseTrainer(object):
         LOGGER.info(f"### Device {self.device} will be used for training")
 
     def _create_folder_structure(self):
+        # a resumed run continues inside the run directory of the interrupted run
+        if self._resumes_training_state():
+            self.cfg.base_run_dir = self.cfg.run_dir
+            self.cfg.train_dir = self.cfg.run_dir / "train_data"
+            self.cfg.train_dir.mkdir(parents=True, exist_ok=True)
+            if self.cfg.log_n_figures is not None:
+                self.cfg.img_log_dir = self.cfg.run_dir / "img_log"
+                self.cfg.img_log_dir.mkdir(parents=True, exist_ok=True)
+            return
+
         # create as subdirectory within run directory of base run
         if self.cfg.is_continue_training:
             folder_name = f"continue_training_from_epoch{self._epoch:03d}"

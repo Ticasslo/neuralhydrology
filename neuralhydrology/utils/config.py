@@ -600,6 +600,10 @@ class Config(object):
         return self._cfg.get("max_updates_per_epoch")
 
     @property
+    def max_training_hours(self) -> Optional[float]:
+        return self._cfg.get("max_training_hours", None)
+
+    @property
     def mc_dropout(self) -> bool:
         return self._cfg.get("mc_dropout", False)
 
@@ -721,6 +725,10 @@ class Config(object):
     @property
     def rating_curve_file(self) -> Path:
         return self._get_value_verbose("rating_curve_file")
+
+    @property
+    def resume_training_state(self) -> bool:
+        return self._cfg.get("resume_training_state", False)
 
     @property
     def regularization(self) -> List[Union[str, Tuple[str, float]]]:

@@ -19,9 +19,11 @@ class Logger(object):
     ----------
     cfg : Config
         The run configuration.
+    config_file_name : str, optional
+        Name of the copy of the run configuration stored in the run directory. Default: 'config.yml'.
     """
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, config_file_name: str = 'config.yml'):
         self._train = True
         self.log_interval = cfg.log_interval
         self.log_dir = cfg.run_dir
@@ -38,7 +40,7 @@ class Logger(object):
         cfg.update_config({"package_version": __version__})
 
         # store a copy of the config into the run folder
-        cfg.dump_config(folder=self.log_dir)
+        cfg.dump_config(folder=self.log_dir, filename=config_file_name)
 
         self.epoch = 0
         self.update = 0
