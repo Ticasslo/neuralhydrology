@@ -384,6 +384,17 @@ class BaseTrainer(object):
                                     "(training_state_epochNNN.pt), which resume_training_state needs.")
         return epochs[-1]
 
+    @staticmethod
+    def _plain(value):
+        """NumPy scalars (e.g. median validation metrics) as Python numbers, so the state loads with weights_only."""
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, dict):
+            return {k: BaseTrainer._plain(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(BaseTrainer._plain(v) for v in value)
+        return value
+
     def _save_training_state(self, epoch: int):
         """Store everything besides weights and optimizer that the next epoch depends on."""
         np_state = np.random.get_state()
@@ -401,6 +412,7 @@ class BaseTrainer(object):
             'rng_torch': torch.get_rng_state(),
             'rng_cuda': torch.cuda.get_rng_state(self.device) if self.device.type == 'cuda' else None,
         }
+        state = self._plain(state)
         # write to a temporary file first, so that an interrupted write never leaves a broken state file
         path = self.cfg.run_dir / f"training_state_epoch{epoch:03d}.pt"
         tmp_path = path.with_suffix('.tmp')

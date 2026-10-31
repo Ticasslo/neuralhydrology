@@ -1,5 +1,6 @@
 """Tests of resume_training_state and max_training_hours: a run continued from its training state must match an
 uninterrupted run bit for bit (weights, optimizer, best model, validation metrics), on the CPU"""
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -59,7 +60,11 @@ def _equal(a, b) -> bool:
 
 
 @pytest.mark.parametrize('core', ['lstm', 'transformer'])
-def test_resumed_run_equals_uninterrupted_run(get_config: Fixture[Callable[[str], Config]], tmp_path: Path, core: str):
+def test_resumed_run_equals_uninterrupted_run(get_config: Fixture[Callable[[str], Config]], tmp_path: Path, core: str,
+                                              caplog: pytest.LogCaptureFixture):
+    # messages are checked with caplog: logging.basicConfig in setup_logging only takes effect once per process, so
+    # output.log of later runs in the same pytest process stays empty
+    caplog.set_level(logging.INFO)
     start_training(_config(get_config, tmp_path / 'straight', core, EPOCHS))
     straight = _single_run_dir(tmp_path / 'straight')
 
@@ -72,7 +77,7 @@ def test_resumed_run_equals_uninterrupted_run(get_config: Fixture[Callable[[str]
     assert [p.name for p in resumed.iterdir() if p.is_dir() and p.name.startswith('continue_training')] == []
     assert (resumed / 'config.yml').read_text() == original_config
     assert (resumed / f'config_continue_from_epoch{EPOCHS // 2:03d}.yml').is_file()
-    assert f'Training state of epoch {EPOCHS // 2} restored' in (resumed / 'output.log').read_text()
+    assert f'Training state of epoch {EPOCHS // 2} restored' in caplog.text
 
     for epoch in range(1, EPOCHS + 1):
         assert _equal(_load(straight / f'model_epoch{epoch:03d}.pt'), _load(resumed / f'model_epoch{epoch:03d}.pt'))
@@ -89,11 +94,13 @@ def test_resumed_run_equals_uninterrupted_run(get_config: Fixture[Callable[[str]
                   _load(resumed / f'training_state_epoch{EPOCHS:03d}.pt'))
 
 
-def test_max_training_hours_pauses_after_epoch(get_config: Fixture[Callable[[str], Config]], tmp_path: Path):
+def test_max_training_hours_pauses_after_epoch(get_config: Fixture[Callable[[str], Config]], tmp_path: Path,
+                                               caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO)
     start_training(_config(get_config, tmp_path, 'lstm', EPOCHS, max_training_hours=1e-9))
     run_dir = _single_run_dir(tmp_path)
-    assert 'Training paused at epoch 1' in (run_dir / 'output.log').read_text()
-    assert 'stopped early' not in (run_dir / 'output.log').read_text()
+    assert 'Training paused at epoch 1' in caplog.text
+    assert 'stopped early' not in caplog.text
     assert all((run_dir / f'{name}_epoch001.pt').is_file() for name in ['model', 'optimizer_state', 'training_state'])
     assert not (run_dir / 'model_epoch002.pt').exists()
 
