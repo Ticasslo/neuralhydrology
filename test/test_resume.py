@@ -23,7 +23,8 @@ def _config(get_config: Callable[[str], Config], run_dir: Path, core: str, epoch
     config = get_config('daily_regression')
     update = {'dataset': 'camels_us', 'data_dir': config.data_dir / 'camels_us', 'forcings': 'daymet',
               'dynamic_inputs': HINDCAST, 'hindcast_inputs': HINDCAST, 'forecast_inputs': FORECAST,
-              'forecast_seq_length': 2, 'model': 'sequential_forecast', 'sf_core': core, 'sf_dropout': 0.1,
+              'seq_length': config.seq_length, 'forecast_seq_length': 2, 'model': 'sequential_forecast',
+              'sf_core': core, 'sf_dropout': 0.1,
               'dynamics_embedding': {'type': 'fc', 'hiddens': [16], 'activation': 'tanh'},
               'statics_embedding': {'type': 'fc', 'hiddens': [16], 'activation': 'tanh'}, 'log_n_figures': 0,
               'log_tensorboard': False, 'learning_rate': 1e-3,
