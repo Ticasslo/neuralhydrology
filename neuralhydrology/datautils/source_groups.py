@@ -17,9 +17,10 @@ def lamah_source_groups(variables):
     return [groups[source] for source in order if groups[source]]
 
 
-def configure_lamah_b2(cfg: Config) -> Config:
+def configure_lamah_b2(cfg: Config, *, preserve_masking: bool = False) -> Config:
     # B2 adds only grouping, masked mean and its sample filter to the B1b configuration.
-    if (cfg.model != 'sequential_forecast_lstm' or cfg.target_variables != ['qmax']
+    # C can reuse a selected B3 configuration by explicitly retaining its training masks.
+    if (cfg.model not in ('sequential_forecast_lstm', 'sequential_forecast') or cfg.target_variables != ['qmax']
             or cfg.forecast_seq_length != 1 or cfg.forecast_overlap
             or cfg.seq_length != 365 or cfg.predict_last_n != 1
             or cfg.epochs != 30 or cfg.early_stopping_patience != 30):
@@ -37,6 +38,7 @@ def configure_lamah_b2(cfg: Config) -> Config:
     result = copy.deepcopy(cfg)
     result.update_config(dict(dynamic_inputs=hindcast + forecast, hindcast_inputs=hindcast,
                               forecast_inputs=forecast, nan_handling_method='masked_mean',
-                              nan_step_probability=0., nan_sequence_probability=0.,
+                              nan_step_probability=cfg.nan_step_probability if preserve_masking else 0.,
+                              nan_sequence_probability=cfg.nan_sequence_probability if preserve_masking else 0.,
                               timestep_counter=False, forecast_input_mode='all'))
     return result
