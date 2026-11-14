@@ -2,6 +2,7 @@
 # both loaders, causality, the model with every CPU core, and training + evaluation with per-lead-time metrics.
 # Synthetic LamaH files with the real variable names of the forecast phase; Mamba is checked on the GPU only.
 import copy
+import inspect
 import pickle
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
+from neuralhydrology.datasetzoo import get_dataset
 from neuralhydrology.datasetzoo.lamah import LamaH
 from neuralhydrology.datautils.gpu_loader import GpuBatchLoader
 from neuralhydrology.datautils.source_groups import LAMAH_H_MODES, LAMAH_PERFECT_FORECAST, configure_lamah_h
@@ -358,6 +360,22 @@ def test_unknown_selection_metric_stops_training(h_config):
     cfg = h_config('hybrid', **dict(TRAINING, early_stopping_metric='NSE_lead_men', epochs=1))
     with pytest.raises(ValueError, match='not found in validation'):
         start_training(cfg)
+
+
+def test_additional_features_do_not_leak(h_config, tmp_path):
+    # A data set built with additional_feature_files must not leave its features in the shared default list of
+    # get_dataset: the next data set without them (e.g. the next test, or the next run in a process) would get them.
+    dates = pd.date_range('2002-12-01', '2003-04-30', freq='1D', name='date')
+    extra = {basin: pd.DataFrame({'extra': np.arange(len(dates), dtype=float)}, index=dates) for basin in ('1', '2')}
+    path = tmp_path / 'extra.p'
+    with path.open('wb') as fp:
+        pickle.dump(extra, fp)
+    default = inspect.signature(get_dataset).parameters['additional_features'].default
+    with_extra = get_dataset(h_config(additional_feature_files=[path]), is_train=True, period='train', scaler={})
+    assert len(with_extra.additional_features) == 1
+    assert default == [] and inspect.signature(get_dataset).parameters['additional_features'].default == []
+    without = get_dataset(h_config(), is_train=True, period='train', scaler={})
+    assert without.additional_features == []
 
 
 def test_lead_metrics_need_several_targets(h_config, tmp_path):

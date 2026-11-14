@@ -97,7 +97,10 @@ class BaseDataset(Dataset):
             self.basins = utils.load_basin_file(getattr(cfg, f"{period}_basin_file"))
         else:
             self.basins = [basin]
-        self.additional_features = additional_features
+        # Own list: the default [] of get_dataset and of the dataset classes is shared by every call, and
+        # _load_additional_features appends to this list => without a copy the features of one run leak into the next
+        # data set built in the same process.
+        self.additional_features = list(additional_features)
         self.id_to_int = id_to_int
         self.scaler = scaler
         # don't compute scale when finetuning
