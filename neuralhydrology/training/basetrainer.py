@@ -302,6 +302,10 @@ class BaseTrainer(object):
                 if self.early_stopping is not None:
                     metric_name = self.cfg.early_stopping_metric
                     if metric_name not in valid_metrics:
+                        if self.cfg.lead_time_metrics:
+                            # Lead-time runs select on a lead metric; never replace it by the loss.
+                            raise ValueError(f"Early stopping metric '{metric_name}' not found in validation "
+                                             f"metrics: {list(valid_metrics.keys())}.")
                         LOGGER.warning(f"Early stopping metric '{metric_name}' not found in validation metrics. "
                                      f"Available metrics: {list(valid_metrics.keys())}. Using 'avg_total_loss'.")
                         metric_name = 'avg_total_loss'

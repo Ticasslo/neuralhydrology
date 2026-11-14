@@ -42,3 +42,42 @@ def configure_lamah_b2(cfg: Config, *, preserve_masking: bool = False) -> Config
                               nan_sequence_probability=cfg.nan_sequence_probability if preserve_masking else 0.,
                               timestep_counter=False, forecast_input_mode='all'))
     return result
+
+
+# Reanalysis counterparts of ECMWF_t2m, ECMWF_d2m, ECMWF_ssrd, ECMWF_tp, ECMWF_e, in that order.
+LAMAH_PERFECT_FORECAST = ('ERA5L_2m_temp_mean', 'ERA5L_2m_dp_temp_mean', 'EOBS_qq', 'MSWEP_RR', 'GLEAM_ETA')
+# Forecast-phase input of each H variant => forecast_input_mode.
+LAMAH_H_MODES = dict(past='none', hybrid='first_day', perfect='all')
+
+
+def configure_lamah_h(cfg: Config, mode: str, *, horizon: int = 7,
+                      perfect_inputs=LAMAH_PERFECT_FORECAST) -> Config:
+    # H extends a grouped one-day configuration (configure_lamah_b2) to horizon days: the hindcast keeps its length,
+    # the forecast phase grows from 1 to horizon steps and every step is a target.
+    # past: HRES hidden on all days; hybrid: HRES on the first day only; perfect: reanalysis on all days.
+    if mode not in LAMAH_H_MODES:
+        raise ValueError(f'H mode must be one of {tuple(LAMAH_H_MODES)}.')
+    if not isinstance(horizon, int) or horizon < 2:
+        raise ValueError('H requires a horizon of at least two days.')
+    hindcast, forecast = cfg.hindcast_inputs, cfg.forecast_inputs
+    if (cfg.model not in ('sequential_forecast_lstm', 'sequential_forecast') or cfg.target_variables != ['qmax']
+            or cfg.forecast_seq_length != 1 or cfg.forecast_overlap or cfg.predict_last_n != 1
+            or cfg.nan_handling_method != 'masked_mean' or cfg.forecast_input_mode != 'all'
+            or not hindcast or not isinstance(hindcast[0], list)
+            or len(forecast) != 1 or not isinstance(forecast[0], list)
+            or not all(name.startswith('ECMWF_') for name in forecast[0])):
+        raise ValueError('H requires a grouped one-day masked-mean configuration with one ECMWF forecast group.')
+    update = dict(seq_length=cfg.seq_length + horizon - 1, forecast_seq_length=horizon, predict_last_n=horizon,
+                  timestep_counter=True, forecast_input_mode=LAMAH_H_MODES[mode])
+    if mode == 'perfect':
+        perfect = list(perfect_inputs)
+        if len(perfect) != len(forecast[0]) or len(set(perfect)) != len(perfect):
+            raise ValueError('perfect needs one distinct reanalysis variable per ECMWF forecast variable.')
+        missing = [name for name in perfect if name not in cfg.hindcast_inputs_flattened]
+        if missing:
+            raise ValueError(f'perfect inputs are not hindcast inputs: {missing}')
+        # The same columns feed both phases, so the loader must list them once.
+        update.update(forecast_inputs=[perfect], dynamic_inputs=copy.deepcopy(hindcast))
+    result = copy.deepcopy(cfg)
+    result.update_config(update)
+    return result

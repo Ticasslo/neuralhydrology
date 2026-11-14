@@ -442,10 +442,11 @@ class Config(object):
 
     @property
     def forecast_input_mode(self) -> str:
-        # all: existing one-day inputs; first_day: only HRES from the first forecast day.
+        # all: forecast inputs as stored; first_day: only HRES from the first forecast day;
+        # none: every forecast input is masked, the model sees hindcast, statics and the step counter only.
         mode = self._cfg.get('forecast_input_mode', 'all')
-        if mode not in ('all', 'first_day'):
-            raise ValueError('forecast_input_mode must be all or first_day.')
+        if mode not in ('all', 'first_day', 'none'):
+            raise ValueError('forecast_input_mode must be all, first_day or none.')
         return mode
 
     @property
@@ -563,6 +564,11 @@ class Config(object):
             Returns empty dict if no scheduler is configured.
         """
         return self._as_default_dict(self._cfg.get("lr_scheduler", {}))
+
+    @property
+    def lead_time_metrics(self) -> bool:
+        # Adds <metric>_lead<k> and <metric>_lead_mean to the evaluation when predict_last_n > 1.
+        return bool(self._cfg.get("lead_time_metrics", False))
 
     @property
     def log_interval(self) -> int:

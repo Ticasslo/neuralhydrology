@@ -19,6 +19,8 @@ from neuralhydrology.datasetzoo.basedataset import BaseDataset
 from neuralhydrology.datautils.gpu_loader import GpuBatchLoader
 from neuralhydrology.datautils.utils import get_frequency_factor, load_basin_file, load_scaler, sort_frequencies
 from neuralhydrology.evaluation import plots
+from neuralhydrology.evaluation.lead_metrics import (calculate_lead_time_metrics, check_lead_time_config,
+                                                     lead_time_metric_names)
 from neuralhydrology.evaluation.metrics import calculate_metrics, get_available_metrics
 from neuralhydrology.evaluation.utils import load_basin_id_encoding, metrics_to_dataframe
 from neuralhydrology.modelzoo import get_model
@@ -61,6 +63,8 @@ class BaseTester(object):
             self.period = period
         else:
             raise ValueError(f'Invalid period {period}. Must be one of ["train", "validation", "test"]')
+        if cfg.lead_time_metrics:
+            check_lead_time_config(cfg)
 
         # determine device
         self._set_device()
@@ -356,6 +360,22 @@ class BaseTester(object):
                             for k, v in values.items():
                                 results[basin][freq][k] = v
 
+                if metrics and self.cfg.lead_time_metrics:
+                    # Same metrics per lead time, on the target days shared by all leads.
+                    for target_variable in self.cfg.target_variables:
+                        var_metrics = metrics if isinstance(metrics, list) else metrics[target_variable]
+                        if 'all' in var_metrics:
+                            var_metrics = get_available_metrics(include_probabilistic=False)
+                        values = calculate_lead_time_metrics(
+                            xr, target_variable, var_metrics, resolution=freq,
+                            clip_to_zero=target_variable in self.cfg.clip_targets_to_zero)
+                        if len(self.cfg.target_variables) > 1:
+                            values = {f"{target_variable}_{key}": val for key, val in values.items()}
+                        if experiment_logger is not None:
+                            experiment_logger.log_step(**values)
+                        for k, v in values.items():
+                            results[basin][freq][k] = v
+
         # convert default dict back to normal Python dict to avoid unexpected behavior when trying to access
         # a non-existing basin
         results = dict(results)
@@ -417,6 +437,8 @@ class BaseTester(object):
                 metrics_list = list(set(metrics_list.values()))
             if "all" in metrics_list:
                 metrics_list = get_available_metrics(include_probabilistic=self._has_sample_results(results))
+            if self.cfg.lead_time_metrics:
+                metrics_list = list(metrics_list) + lead_time_metric_names(metrics_list, self.cfg.predict_last_n)
             df = metrics_to_dataframe(results, metrics_list, self.cfg.target_variables)
             metrics_file = parent_directory / f"{self.period}_metrics.csv"
             df.to_csv(metrics_file)
