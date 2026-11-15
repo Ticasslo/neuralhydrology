@@ -443,10 +443,11 @@ class Config(object):
     @property
     def forecast_input_mode(self) -> str:
         # all: forecast inputs as stored; first_day: only HRES from the first forecast day;
-        # none: every forecast input is masked, the model sees hindcast, statics and the step counter only.
+        # none: every forecast input is masked, the model sees hindcast, statics and the step counter only;
+        # gefs: HRES on the first forecast day and, on forecast day k, the GEFS group of lead k only.
         mode = self._cfg.get('forecast_input_mode', 'all')
-        if mode not in ('all', 'first_day', 'none'):
-            raise ValueError('forecast_input_mode must be all, first_day or none.')
+        if mode not in ('all', 'first_day', 'none', 'gefs'):
+            raise ValueError('forecast_input_mode must be all, first_day, none or gefs.')
         return mode
 
     @property

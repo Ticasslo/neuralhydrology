@@ -48,15 +48,19 @@ def configure_lamah_b2(cfg: Config, *, preserve_masking: bool = False) -> Config
 LAMAH_PERFECT_FORECAST = ('ERA5L_2m_temp_mean', 'ERA5L_2m_dp_temp_mean', 'EOBS_qq', 'MSWEP_RR', 'GLEAM_ETA')
 # Forecast-phase input of each H variant => forecast_input_mode.
 LAMAH_H_MODES = dict(past='none', hybrid='first_day', perfect='all')
+# GEFSv12 reforecast counterparts of the five HRES variables, as columns GEFS_<variable>_lead<k> (k = 1..horizon):
+# the value on day d is the forecast for day d issued on day d - k + 1 (04_GEFS_Download).
+LAMAH_GEFS_VARIABLES = ('t2m', 'd2m', 'ssrd', 'tp', 'e')
 
 
 def configure_lamah_h(cfg: Config, mode: str, *, horizon: int = 7,
-                      perfect_inputs=LAMAH_PERFECT_FORECAST) -> Config:
+                      perfect_inputs=LAMAH_PERFECT_FORECAST, gefs_variables=LAMAH_GEFS_VARIABLES) -> Config:
     # H extends a grouped one-day configuration (configure_lamah_b2) to horizon days: the hindcast keeps its length,
     # the forecast phase grows from 1 to horizon steps and every step is a target.
-    # past: HRES hidden on all days; hybrid: HRES on the first day only; perfect: reanalysis on all days.
-    if mode not in LAMAH_H_MODES:
-        raise ValueError(f'H mode must be one of {tuple(LAMAH_H_MODES)}.')
+    # past: HRES hidden on all days; hybrid: HRES on the first day only; perfect: reanalysis on all days;
+    # gefs: HRES on the first day, plus one GEFS group per lead time, of which forecast day k sees lead k only.
+    if mode not in LAMAH_H_MODES and mode != 'gefs':
+        raise ValueError(f'H mode must be one of {tuple(LAMAH_H_MODES) + ("gefs",)}.')
     if not isinstance(horizon, int) or horizon < 2:
         raise ValueError('H requires a horizon of at least two days.')
     hindcast, forecast = cfg.hindcast_inputs, cfg.forecast_inputs
@@ -68,7 +72,7 @@ def configure_lamah_h(cfg: Config, mode: str, *, horizon: int = 7,
             or not all(name.startswith('ECMWF_') for name in forecast[0])):
         raise ValueError('H requires a grouped one-day masked-mean configuration with one ECMWF forecast group.')
     update = dict(seq_length=cfg.seq_length + horizon - 1, forecast_seq_length=horizon, predict_last_n=horizon,
-                  timestep_counter=True, forecast_input_mode=LAMAH_H_MODES[mode])
+                  timestep_counter=True, forecast_input_mode=LAMAH_H_MODES.get(mode, mode))
     if mode == 'perfect':
         perfect = list(perfect_inputs)
         if len(perfect) != len(forecast[0]) or len(set(perfect)) != len(perfect):
@@ -78,6 +82,13 @@ def configure_lamah_h(cfg: Config, mode: str, *, horizon: int = 7,
             raise ValueError(f'perfect inputs are not hindcast inputs: {missing}')
         # The same columns feed both phases, so the loader must list them once.
         update.update(forecast_inputs=[perfect], dynamic_inputs=copy.deepcopy(hindcast))
+    if mode == 'gefs':
+        variables = list(gefs_variables)
+        if not variables or len(set(variables)) != len(variables):
+            raise ValueError('gefs needs distinct GEFS variables.')
+        lead_groups = [[f'GEFS_{name}_lead{k}' for name in variables] for k in range(1, horizon + 1)]
+        update.update(forecast_inputs=copy.deepcopy(forecast) + lead_groups,
+                      dynamic_inputs=copy.deepcopy(hindcast) + copy.deepcopy(forecast) + lead_groups)
     result = copy.deepcopy(cfg)
     result.update_config(update)
     return result
