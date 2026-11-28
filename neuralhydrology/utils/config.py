@@ -321,6 +321,19 @@ class Config(object):
         return self._cfg.get("data_on_gpu", False)
 
     @property
+    def high_flow_oversample(self) -> dict:
+        # {quantile: q, factor: f}: training samples whose target on the predicted day lies above the per-basin
+        # q-quantile of the training targets are drawn f times as often (data_on_gpu only); empty = uniform shuffle
+        value = self._cfg.get("high_flow_oversample", None)
+        if not value:
+            return {}
+        if set(value) != {"quantile", "factor"}:
+            raise ValueError("high_flow_oversample needs exactly the keys 'quantile' and 'factor'.")
+        if not 0 < float(value["quantile"]) < 1 or float(value["factor"]) <= 0:
+            raise ValueError("high_flow_oversample needs 0 < quantile < 1 and factor > 0.")
+        return {"quantile": float(value["quantile"]), "factor": float(value["factor"])}
+
+    @property
     def dataset(self) -> str:
         return self._get_value_verbose("dataset")
 

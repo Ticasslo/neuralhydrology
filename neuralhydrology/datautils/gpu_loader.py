@@ -1,4 +1,5 @@
 """Batch loader that keeps a dataset in device memory and builds each batch with one index operation (``data_on_gpu``)."""
+import logging
 import math
 from typing import Dict, Iterator, List, Union
 
@@ -7,6 +8,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from neuralhydrology.datasetzoo.basedataset import BaseDataset
+
+LOGGER = logging.getLogger(__name__)
 
 Batch = Dict[str, Union[torch.Tensor, np.ndarray, Dict[str, torch.Tensor]]]
 
@@ -103,16 +106,44 @@ class GpuBatchLoader:
             self._counters = {"hindcast_counter": ds.hindcast_counter.to(**to),
                               "forecast_counter": ds.forecast_counter.to(**to)}
         self._nan_streaks = ds.is_train and bool(cfg.nan_step_probability or cfg.nan_sequence_probability)
+        self._weights = self._oversample_weights(ds) if shuffle and ds.is_train and cfg.high_flow_oversample else None
 
     def __len__(self) -> int:
         return math.ceil(self.n_samples / self.batch_size)
 
     def __iter__(self) -> Iterator[Batch]:
         # draw the order through a DataLoader so that the random number generator is used as in the replaced loader
-        order = torch.cat(list(DataLoader(range(self.n_samples), batch_size=self.batch_size, shuffle=self.shuffle)))
+        if self._weights is None:
+            order = torch.cat(list(DataLoader(range(self.n_samples), batch_size=self.batch_size, shuffle=self.shuffle)))
+        else:
+            # high_flow_oversample: n draws with replacement, so an epoch keeps the same number of batches
+            order = torch.multinomial(self._weights, self.n_samples, replacement=True)
         order_dev = order.to(self.device)
         for start in range(0, self.n_samples, self.batch_size):
             yield self._batch(order_dev[start:start + self.batch_size], order[start:start + self.batch_size])
+
+    def _oversample_weights(self, ds: BaseDataset) -> torch.Tensor:
+        # weight `factor` for samples whose (normalized) target on the last time step lies above the per-basin quantile
+        # of the targets of all training samples of that basin, else 1; NaN targets keep weight 1
+        if self._y.shape[1] != 1 or (self.cfg.predict_last_n or 1) != 1:
+            raise NotImplementedError("high_flow_oversample supports one target variable and predict_last_n = 1.")
+        opts = self.cfg.high_flow_oversample
+        target = self._y[self._row_of, 0].cpu().numpy().astype(np.float64)
+        basin = self._basin_of.cpu().numpy()
+        high = np.zeros(self.n_samples, dtype=bool)
+        self.oversample_thresholds = {}
+        for b in np.unique(basin):
+            values = target[basin == b]
+            if np.isfinite(values).any():
+                threshold = np.nanquantile(values, opts["quantile"])
+                high[basin == b] = values > threshold
+                self.oversample_thresholds[int(b)] = float(threshold)
+        self.oversample_high = high
+        weights = np.where(high, opts["factor"], 1.0)
+        share = weights[high].sum() / weights.sum()
+        LOGGER.info(f"high_flow_oversample: {high.sum()} of {self.n_samples} samples above the per-basin "
+                    f"{opts['quantile']} quantile, drawn {opts['factor']}x => {share:.2%} of each epoch")
+        return torch.as_tensor(weights, dtype=torch.float64)
 
     def _batch(self, idx: torch.Tensor, idx_host: torch.Tensor) -> Batch:
         basin, row = self._basin_of[idx], self._row_of[idx]

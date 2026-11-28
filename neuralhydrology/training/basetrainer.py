@@ -106,6 +106,8 @@ class BaseTrainer(object):
         return get_tester(cfg=self.cfg, run_dir=self.cfg.run_dir, period="validation", init_model=False)
 
     def _get_data_loader(self, ds: BaseDataset) -> torch.utils.data.DataLoader:
+        if self.cfg.high_flow_oversample and not self.cfg.data_on_gpu:
+            raise NotImplementedError("high_flow_oversample is implemented in the data_on_gpu loader only.")
         if self.cfg.data_on_gpu:
             # keep the training data on the device and gather each batch there (same batches as the DataLoader)
             return GpuBatchLoader(ds, batch_size=self.cfg.batch_size, device=self.device, shuffle=True)
